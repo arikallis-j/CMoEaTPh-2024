@@ -5,76 +5,201 @@ class Calculator:
     def test(self):
         print(f"Test")
 
-    def hw_1_1(self, x=100, t=100, n=1, a=2, q=0.25):
-        N = 300
-        M = 200
+    def hw_1(self, N=1):
 
+        # Constants
+
+        U0, U1 = 5.0, 10.0
+        c = 2.0
         L = 1.0
-        h = L / M
+        T = abs(L / c)
 
-        T = abs(L / a)
-        dt = T / N
+        # Main
+        printer = Printer(name="first", xlim=[0,L], ylim=[U0-1,U1+1])
 
-        kurant = a * dt / h
+        """
+        Good solution with 0.0<sigma<1.0 (N!=M)
+        """
+        N, M = 300, 200
+        q = 0.15 # best result
+        c = 2.0
+        solver = Solver(name="test", N = N, M = M, rng_x = (0,L), rng_t = (0, T))
 
-        equation = Equation(name="Test", N=N, M=M, a=a, 
-                            X_rng=(0,L), T_rng=(0,T), 
-                            f_cond = (phi,psi), u_cond = (5, 10),
-                            q = q)
+        # GOOD
+        # Scheme_1
+        def scheme_1(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            return F[t,x] - sigma * (F[t,x] - F[t,x-1])
 
-        equation.conditional()
-        if n==1:
-            print("scheme 1")
-            equation.scheme_1()
-        elif n==2:
-            print("scheme 2")
-            equation.scheme_2()   
-        elif n==3:
-            print("scheme 3")
-            equation.scheme_3()
-        elif n==4:
-            print("scheme 4")   
-            equation.scheme_4()
-        elif n==5:
-            print("scheme 5")   
-            equation.scheme_5()
-        elif n==5.1:
-            print("scheme 5.1")   
-            equation.scheme_5_sm()
-        elif n==6:
-            print("scheme 6")   
-            equation.scheme_6()
-        elif n==7:
-            print("scheme 7")   
-            equation.scheme_7()
-        elif n==8:
-            print("scheme 8")   
-            equation.scheme_8()
-        equation.draw()
-        # for k in range(equation.N):
-        #     print(equation.Y[k,:])
-    
-    def hw_1_2(self, x=300, t=300, n=1, a=2, q=0.25):
-        N = x
-        M = t
+        funcs = scheme_1, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,0), False
 
-        L = 1.0
-        h = L / M
+        # GOOD
+        # Scheme_2
+        def scheme_2(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            return (F[t,x] + sigma * F[t+1,x-1]) / (1 + sigma)
 
-        T = abs(L / a)
-        dt = T / N
+        funcs = scheme_2, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,0), False
 
-        kurant = a * dt / h
+        # GOOD
+        # Scheme_4
+        def scheme_4(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            return 0.5 * ( (F[t,x-1] + F[t, x+1]) - sigma * (F[t, x+1] - F[t,x-1]) )
 
-        equation = Equation(name="Test", N=N, M=M, a=a, 
-                            X_rng=(0,L), T_rng=(0,T), 
-                            f_cond = (phi,psi), u_cond = (5, 10),
-                            q = q)
-        equation.conditional()
-        if n==1:
-            print("scheme 2-1")
-            equation.scheme_2_1()
+        funcs = scheme_4, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), False
 
-        equation.draw()
-        # for k in range(equation.N):
-        #     print(equation.Y[k,:])
+        # GOOD
+        # Scheme_5
+        def scheme_5(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            y_pos = 0.5 * sigma * (1 - sigma) * (F[t,x+1] - F[t,x])
+            y_neg = 0.5 * sigma * (1 - sigma) * (F[t,x] - F[t,x-1])
+
+            return F[t,x] - sigma * (F[t,x] - F[t,x-1]) - (y_pos - y_neg)
+
+        funcs = scheme_5, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), False
+
+        # GOOD
+        # Scheme_5_sm
+        def scheme_5_sm(F, t, x, dt, dx, a, q):
+            sigma = a*dt/dx
+            Dpp = F[t,x+2] - F[t,x+1]
+            Dp = F[t,x+1] - F[t,x]
+            Dm = F[t,x] - F[t,x-1]
+            Dmm = F[t,x-1] - F[t,x-2]
+
+            Q_pos, Q_neg = 0, 0
+
+            if (Dpp*Dp < 0) or (Dp * Dm < 0):
+                Q_pos = Dp
+
+            if (Dmm*Dm < 0) or (Dp * Dm < 0):
+                Q_neg = Dm
+
+            return scheme_5(F, t, x, dt, dx, a) + q * (Q_pos - Q_neg)
+
+        funcs = scheme_5_sm, phi, psi, equal
+        pars = ((c,q), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-2), False
+
+
+        # Printing
+        # U, X, T = solver.equation(funcs=funcs, pars=pars, dt=borders_t, dr=borders_r ,invert=invert)
+        # G_real, Y_real = real_sol(X, T, c, U0, U1)
+        # printer.animate(X, U, Y=Y_real, G=G_real)
+
+        """
+        Good solution with -1.0<sigma<0.0 (N!=M, c<0)
+        """
+        N, M = 300, 200
+        c = -2.0
+        solver = Solver(name="test", N = N, M = M, rng_x = (0,L), rng_t = (0, T))
+
+        # GOOD
+        # Scheme_3
+        def scheme_3(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            return (F[t,x] - sigma * F[t+1,x+1]) / (1 - sigma)
+
+        funcs = scheme_3, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), True
+
+        # Printing
+        # U, X, T = solver.equation(funcs=funcs, pars=pars, dt=borders_t, dr=borders_r ,invert=invert)
+        # G_real, Y_real = real_sol(X, T, c, U0, U1)
+        # printer.animate(X, U, Y=Y_real, G=G_real)
+
+        """
+        Good solution with sigma=1.0 (N=M)
+        """
+        N, M = 500, 500
+        c = 2.0
+        eps = 1e-15 # best result
+        solver = Solver(name="test", N = N, M = M, rng_x = (0,L), rng_t = (0, T))
+
+        # GOOD
+        # Scheme_6
+        def scheme_6(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+            return (F[t,x] - sigma * (1.5 * F[t,x] - 2 * F[t,x-1] + 0.5 * F[t,x-2]) 
+                            + 0.5 * sigma**2 * (F[t,x] - 2 * F[t,x-1] + F[t,x-2]))
+
+        funcs = scheme_6, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), False
+
+        # GOOD
+        # Scheme_7
+        def scheme_7(F, t, x, dt, dx, a, eps):
+            sigma = a*dt/dx
+            r_m = (F[t,x] - F[t,x-1] + eps)/(F[t,x+1] - F[t,x] + eps)
+            y_pos = 0.5 * phi_m(r_m) * sigma * (1 - sigma) * (F[t,x+1] - F[t,x])
+            y_neg = 0.5 * phi_m(r_m) * sigma * (1 - sigma) * (F[t,x] - F[t,x-1])
+
+            return F[t,x] - sigma * (F[t,x] - F[t,x-1]) - (y_pos - y_neg)
+
+        funcs = scheme_7, phi, psi, equal
+        pars = ((c,eps), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), False
+
+        # GOOD
+        # Scheme_8
+        def scheme_8(F, t, x, dt, dx, a):
+            sigma = a*dt/dx
+
+            def S(sigma, a, b):
+                return 0.5*(1+sigma)*a + 0.5*(1-sigma)*b
+            def N(sigma, a, b):
+                return 0.5*(3-sigma)*a - 0.5*(1-sigma)*b
+
+            if np.abs(F[t,x+1] - F[t,x]) >= np.abs(F[t,x] - F[t,x-1]):
+                y_pos = N(sigma, F[t,x], F[t,x-1])
+            else:
+                y_pos = S(sigma, F[t,x], F[t,x+1])
+
+            if np.abs(F[t,x] - F[t,x-1]) >= np.abs(F[t,x-1] - F[t,x-2]):
+                y_neg = N(sigma, F[t,x-1], F[t,x-2])
+            else:
+                y_neg = S(sigma, F[t,x-1], F[t,x])
+
+            return F[t,x] - sigma * (y_pos - y_neg)
+
+        funcs = scheme_8, phi, psi, equal
+        pars = ((c,), (U0, U1,), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,-1), False
+
+        # Printing
+        # U, X, T = solver.equation(funcs=funcs, pars=pars, dt=borders_t, dr=borders_r ,invert=invert)
+        # G_real, Y_real = real_sol(X, T, c, U0, U1)
+        # printer.animate(X, U, Y=Y_real, G=G_real)
+
+
+        """
+        Unlinear
+        """
+        N, M = 500, 200
+        c = - 0.5
+        solver = Solver(name="test", N = N, M = M, rng_x = (0,L), rng_t = (0, T))
+
+        def scheme_uu(F, t, x, dt, dx, a):
+            eta = a*dt/dx
+            return + eta * F[t,x]*F[t,x] + F[t,x] * (1 - eta * F[t,x-1])
+
+        funcs = scheme_uu, phi, psi, equal
+        pars = ((c,), (U0, U1, ), (U1,))
+        borders_t, borders_r, invert = (0,0), (0,0), False
+
+        # Printing
+        U, X, T = solver.equation(funcs=funcs, pars=pars, dt=borders_t, dr=borders_r ,invert=invert)
+        printer.animate(X, U)
+

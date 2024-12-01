@@ -1,239 +1,144 @@
+# Imports
+
+import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.animation as ani
+import matplotlib.animation as animation
 
-from rich.progress import track
-from matplotlib import rc
-from .func import *
+# Classes
 
+class Func:
+    def __init__(self, func, pars):
+        self.func = func
+        self.pars = pars
+    def __call__(self, *args):
+        return self.func(*args, *self.pars)
+    
+class Setting:
+    def __init__(self, standart_border=True, borders_t = (0,0), borders_r = (0,0)):
+        self.standart_border = standart_border
+        self.t_left = borders_t[0]
+        self.t_right = borders_t[1]
+        self.r_left = borders_r[0::2]
+        self.r_right = borders_r[1::2]
 
-# class System:
-#     def __init__(self, equation, grid, pars):
-#         self.equation = equation
-#         self.grid = grid
-#         self.pars = pars
-#     def calc(self):
-#         pass
+class U_func:
+    def __init__(self, main, inits, null, setting):
+        self.null = null
+        self.main = main
+        self.init_t = inits[0]
+        self.init_r = inits[1]
+        self.setting = setting
+    def __call__(self, F, *args):
+        standart_border = self.setting.standart_border
+        t_left = self.setting.t_left - 1
+        t_right = self.setting.t_right
+        r_left = self.setting.r_left
+        r_right = self.setting.r_right
+        
 
-# class Equation:
-#     def __init__(self, function, conditional, rep = "F(x,t) = 0"):
-#         self.F = function
-#         self.cond = conditional
-#         self.rep = rep
-#     def __str__(self):
-#         return self.rep
+        t, r = args[0], args[1:len(args)]
+        if t==t_left:
+            return self.init_t(*r)
+        
+        i = 0
+        for x_i in r:
+            if standart_border:
+                if x_i==r_left[i]:
+                    return self.init_r(t)
+            else:
+                if x_i==r_right[i]:
+                    return self.init_r(t)
+            i+=1
 
-# class Grid:
-#     def __init__(self, num, dim, field, scheme):
-#         self.dim = dim
-#         self.field = field
-#         self.V = np.zeros(dim)
-#         self.F = np.zeros(dim)
-#         self.DF = np.zeros((num,len(dim),*dim))
+        if (t>=t_right):
+            return self.null(F, t, *r)
+        
+        i = 0
+        for x_i in r:
+            if (x_i>=r_right[i]):
+                return self.null(F, t, *r)
+            i+=1
 
-class Equation:
-    def __init__(self, name, N=3, M=5, a = 2, 
-                 X_rng=(0,1), T_rng=(0,0.5), f_cond = (phi,psi), u_cond = (5, 10),
-                 q = 0.25):
+        for x_i in r:
+            return self.main(F, t, *r)
+
+class Solver:
+    def __init__(self, N = 500, M = 50, rng_x = (0,1.0), rng_t = (0, 1.0), name="name"):
         self.name = name
-        self.N, self.M, self.a = N, M, a
-        self.L = X_rng[1] - X_rng[0]
-        self.Z = T_rng[1] - T_rng[0]
-        self.h, self.tau = self.L/self.M, self.Z/self.N
-        self.eta = self.tau/self.h
-        self.sigma = a * self.tau/self.h
-        self.phi, self.psi = f_cond
-        self.u_cond = u_cond
-        self.q = q
+        self.N, self.M = N, M
+        self.rng_x = rng_x
+        self.rng_t = rng_t
 
-        self.X_rng, self.T_rng = X_rng, T_rng
-        self.I = np.full((M, N), np.arange(0, N)).T
-        self.T = np.full((M, N), np.linspace(*T_rng, N)).T
+        # spatial domain
+        xmin, xmax = rng_x
+        tmin, tmax = rng_t
+        self.xmin, self.xmax = xmin, xmax
+        self.tmin, self.tmax = tmin, tmax
 
-        self.J = np.full((N, M), np.arange(0, M))
-        self.X = np.full((N, M), np.linspace(*X_rng, M))
+        # x grid of n points
+        self.X, self.dx = np.linspace(xmin,xmax,M,retstep=True)
+        self.T, self.dt = np.linspace(tmin,tmax,N,retstep=True)
 
-        self.Y = np.full((N, M), 0.0)
-        self.Y0 = np.full((N, M), 0.0)
+        # each value of the U array contains the solution for all x values at each timestep
+        self.U = np.zeros((N, M))
 
-    def conditional(self):
-        I, J, M = self.I, self.J, self.M
-        if self.a>0:
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-            self.Y[I, J] = np.where(J==0, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-            self.x_rng = 1, M, 1
-        elif self.a<0:
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-            self.Y[I, J] = np.where(J==M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-            self.x_rng = (M-1, 0, -1)
+    # explicit euler solution
+    def equation(self, funcs, pars, dt=(0,0), dr=(0,0), invert=False):
+        u_main, init_t, init_r, equal = funcs
+        par_main, par_init_t, par_init_r = pars
 
-    def scheme_1(self):
-        self.name = 'Явный левый уголок'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_1(i-1, j, Y, sigma), Y[i,j])
-                
+        init_t_func = Func(init_t, par_init_t)
+        init_r_func = Func(init_r, par_init_r)
+        init_func = (init_t_func, init_r_func)
+        equal_func = Func(equal, ())
 
-    def scheme_2(self):
-        self.name = 'Неявный левый уголок'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_2(i-1, j, Y, sigma), Y[i,j])
-    
-    def scheme_3(self):
-        self.name = 'Неявный правый уголок'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_3(i-1, j, Y, sigma), Y[i,j])
+        par_main = self.dt, self.dx, *par_main
+        main_func = Func(u_main, par_main)
+
+        dt_left, dt_right = dt[0], dt[1]
+        dr_left, dr_right = dr[0], dr[1]
+
+        setting = Setting(standart_border=not(invert), 
+                          borders_t=(0+dt_left,self.N + dt_right), 
+                          borders_r=(0+dr_left,self.M + dr_right))
+
+        u_scheme = U_func(main_func, init_func, equal_func, setting=setting)
+        for t in range(self.N):
+            if invert:
+                rng_r = range(self.M-1,-1,-1)
+            else:
+                rng_r = range(self.M)
+
+            for r in rng_r:
+                self.U[t,r] = u_scheme(self.U, t-1, r)
+        return self.U, self.X, self.T
+
+class Printer:
+    def __init__(self, name="name", xlim=[0,1], ylim=[-2,2]):
+        self.name = name
+        self.xlim = xlim
+        self.ylim = ylim
         
-    def scheme_4(self):
-        self.name = 'Схема Лакса'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            b -= 1
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-        else:
-            a -= 1
-            self.Y[I, J] = np.where(J==self.M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(True, scheme_4(i-1, j, Y, sigma), Y[i,j])
-                
-    def scheme_5(self):
-        self.name = 'Схема Лакса-Вендрофа'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            b -= 1
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-        else:
-            a -= 1
-            self.Y[I, J] = np.where(J==self.M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_5(i-1, j, Y, sigma), Y[i,j])        
-    
-    def scheme_5_sm(self):
-        self.name = 'Схема Лакса-Вендрофа, сглаженная'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            b -= 1
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-        else:
-            a -= 1
-            self.Y[I, J] = np.where(J==self.M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_5(i-1, j, Y, sigma), Y[i,j])  
-        
-        Y, q = self.Y, self.q
-        if s==1:
-            b -= 1
-        else:
-            a -= 1
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_5_sm(i-1, j, Y, q=q), Y[i, j])  
-        
-    def scheme_6(self):
-        self.name = 'Схема Бима-Уорминга'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            a += 1
-        else:
-            b += 1
-        for i in range(1,self.N-1):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(True, scheme_5(i-1, j-1, Y, sigma), Y[i,j])        
-    
-
-    def scheme_7(self):
-        self.name = 'Схема TVD'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            b -= 1
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-        else:
-            a -= 1
-            self.Y[I, J] = np.where(J==self.M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_7(i-1, j, Y, sigma), Y[i,j])    
-
-    def scheme_8(self):
-        self.name = 'Схема ENO'
-        I, J = self.I, self.J
-        Y, sigma = self.Y, self.sigma
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        if s==1:
-            b -= 1
-            self.Y[I, J] = np.where(I==0, self.phi(self.X[I,J], u_cond=self.u_cond, point=self.T_rng[1]), self.Y[I,J])
-        else:
-            a -= 1
-            self.Y[I, J] = np.where(J==self.M-1, self.psi(self.T[I,J], u_cond=self.u_cond), self.Y[I,J])
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_8(i-1, j, Y, sigma), Y[i,j])
-
-
-    def scheme_2_1(self):
-        self.name = 'Явный левый уголок, нелин.'
-        I, J = self.I, self.J
-        Y, eta = self.Y, self.eta
-        cond = np.logical_and(I>0, J>0)
-        a, b, s = self.x_rng
-        for i in range(1,self.N):
-            for j in range(a, b, s):
-                self.Y[i, j] = np.where(i>0 and j>0, scheme_2_1(i-1, j, Y, eta), Y[i,j])
-
-    def draw(self):
-        u0, u1 = self.u_cond
-        title = self.name
+    def animate(self, X, U, Y=np.array([]), G=np.array([])):
+        # plot solution
+        plt.style.use('dark_background')
         fig = plt.figure()
-        ax = plt.subplot()
-        ln, = ax.plot([], [],)
-        ln0, = ax.plot([], [],)
-        ax.set_xlim(*self.X_rng)
-        ax.set_ylim((0, 10 + 2))
-        download = range(self.N)#track(range(self.N), description="Time: ", get_time=False)
+        ax1 = fig.add_subplot(1,1,1)
 
-        def update(i):
-            ln.set_data(self.X[i,:], self.Y[i,:])
+        # animate the time data
+        def animate_graph(i):
+            ax1.clear()
+            if G.size!=0:
+                x0 = G[i]
+                X0 = Y[i]
+                plt.plot(X0,x0,color='deepskyblue') #or 'blue' or 'aqua'
 
-            x0 = [0, abs(self.a) * i / self.N * self.Z , abs(self.a) * i / self.N * self.Z , self.L]
-            if self.a<0:
-                x0 = self.L - np.array(x0)
-            y = [u1, u1, u0, u0]
-            ln0.set_data(x0, y)
-            t = round(self.Z, 3)
-            ax.title.set_text(title + f'\n T = {t}')
-            return ln, ln0
+            x = U[i]
+            plt.plot(X,x,color='lime')
 
-        anime = ani.FuncAnimation(fig, update, interval=20, frames=download, blit=True)
+            plt.grid(True)
+            plt.ylim(self.ylim)
+            plt.xlim(self.xlim)
+
+        anim = animation.FuncAnimation(fig,animate_graph,frames=len(U),interval=20)
         plt.show()
